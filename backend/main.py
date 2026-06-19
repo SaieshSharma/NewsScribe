@@ -33,28 +33,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- MODEL CONFIGURATION & LOADING ---
-LOCAL_MODEL_PATH = "./model_weights"
-SENTIMENT_MODEL_PATH = "./sentiment_model"
+
 device = "cpu"
 
-if os.path.exists(LOCAL_MODEL_PATH) and os.listdir(LOCAL_MODEL_PATH):
-    print(f"--- 🏰 Loading trained T5 model from local storage: {LOCAL_MODEL_PATH} ---")
-    model_source = LOCAL_MODEL_PATH
-else:
-    print("--- 🌐 Local weights empty. Defaulting to 't5-small' cloud configuration ---")
-    model_source = "t5-small"
+FINETUNED_T5_HUB = "SaieshSharma/newsscribe-t5"
+FINETUNED_SENTIMENT_HUB = "SaieshSharma/newsscribe-sentiment"
 
-tokenizer = T5Tokenizer.from_pretrained(model_source)
-model = T5ForConditionalGeneration.from_pretrained(model_source).to(device)
+print("Initializing models from Hugging Face Registry Hub...")
 
-if os.path.exists(SENTIMENT_MODEL_PATH) and os.listdir(SENTIMENT_MODEL_PATH):
-    print(f"--- 🏰 Loading local Sentiment Model from {SENTIMENT_MODEL_PATH} ---")
-    sentiment_source = SENTIMENT_MODEL_PATH
-else:
-    sentiment_source = "distilbert-base-uncased-finetuned-sst-2-english"
+# Load your custom fine-tuned T5 Summarizer engine
+tokenizer = T5Tokenizer.from_pretrained(FINETUNED_T5_HUB)
+model = T5ForConditionalGeneration.from_pretrained(FINETUNED_T5_HUB).to(device)
+print("🏰 Fine-tuned T5 core matrix engine loaded successfully.")
 
-sentiment_task = pipeline("sentiment-analysis", model=sentiment_source, device=-1)
+# Load your custom sentiment analysis classification engine
+sentiment_task = pipeline("sentiment-analysis", model=FINETUNED_SENTIMENT_HUB, device=-1)
+print("🏰 Fine-tuned Sentiment analytical layer loaded successfully.")
 
 # --- SCHEMAS ---
 class Article(BaseModel):
@@ -80,8 +74,8 @@ def run_pipeline_inference(raw_text: str):
         output = model.generate(
             inputs["input_ids"],
             num_beams=4,
-            max_new_tokens=80,
-            min_new_tokens=15,
+            max_new_tokens=120,      
+            min_new_tokens=30,
             early_stopping=True,
             no_repeat_ngram_size=3,
             length_penalty=1.0
