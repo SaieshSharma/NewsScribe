@@ -1,0 +1,50 @@
+name: NewsScribe Continuous Deployment Loop
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-ship:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Push Light App Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./backend/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/newsscribe-backend:latest
+
+      - name: Execute Live Remote Server Swap via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.AWS_HOST }}
+          username: ubuntu
+          key: ${{ secrets.AWS_PRIVATE_KEY }}
+          script: |
+            # Pull down the freshly baked app image from DockerHub
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/newsscribe-backend:latest
+            
+            # Stop the running container smoothly
+            docker stop newsscribe-backend-inst || true
+            docker rm newsscribe-backend-inst || true
+            
+            # Spin up the new application container layer
+            # Notice the -v mounts: We leave the model weights completely cached on the EC2 host disk!
+            docker run -d \
+              --name newsscribe-backend-inst \
+              -p 8000:8000 \
+              -v /home/ubuntu/model_weights:/app/model_weights \
+              -v /home/ubuntu/sentiment_model:/app/sentiment_model \
+              --restart unless-stopped \
+              ${{ secrets.DOCKERHUB_USERNAME }}/newsscribe-backend:latest

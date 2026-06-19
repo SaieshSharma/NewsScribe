@@ -1,14 +1,16 @@
 import time
 import os
-from fastapi import FastAPI
+import torch
+import httpx
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from transformers import T5Tokenizer, T5ForConditionalGeneration, pipeline
-import torch
+from bs4 import BeautifulSoup
 
 app = FastAPI()
 
-# Enable CORS for React frontend
+# Enable CORS for React frontend (Vercel)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -16,49 +18,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- MODEL LOADING ---
+# --- MODEL CONFIGURATION & LOADING ---
 LOCAL_MODEL_PATH = "./model_weights"
+SENTIMENT_MODEL_PATH = "./sentiment_model"
 device = "cpu"
 
 if os.path.exists(LOCAL_MODEL_PATH) and os.listdir(LOCAL_MODEL_PATH):
-    print(f"--- 🏰 Loading your TRAINED model from {LOCAL_MODEL_PATH} ---")
+    print(f"--- 🏰 Loading trained T5 model from local storage: {LOCAL_MODEL_PATH} ---")
     model_source = LOCAL_MODEL_PATH
 else:
-    print("--- 🌐 Local model not found. Using 't5-small' cloud weights ---")
+    print("--- 🌐 Local weights empty. Defaulting to 't5-small' cloud configuration ---")
     model_source = "t5-small"
 
-print("Loading T5 model...")
 tokenizer = T5Tokenizer.from_pretrained(model_source)
 model = T5ForConditionalGeneration.from_pretrained(model_source).to(device)
-print("T5 model loaded.")
-print("Loading sentiment model...")
-sentiment_task = pipeline(
-    "sentiment-analysis",
-    model="./sentiment_model"
-)
-print("Sentiment model loaded.")
-print("MODEL SOURCE:", model.config._name_or_path)
+
+if os.path.exists(SENTIMENT_MODEL_PATH) and os.listdir(SENTIMENT_MODEL_PATH):
+    print(f"--- 🏰 Loading local Sentiment Model from {SENTIMENT_MODEL_PATH} ---")
+    sentiment_source = SENTIMENT_MODEL_PATH
+else:
+    sentiment_source = "distilbert-base-uncased-finetuned-sst-2-english"
+
+sentiment_task = pipeline("sentiment-analysis", model=sentiment_source, device=-1)
+
+# --- SCHEMAS ---
 class Article(BaseModel):
     text: str
 
-@app.get("/")
-async def root():
-     return {
-        "status": "healthy",
-        "model": model.config._name_or_path
-    }
+class ScrapeRequest(BaseModel):
+    url: str
 
-@app.post("/generate")
-async def generate_summary(article: Article):
-
+# --- CORE UTILITY WORKFLOWS ---
+def run_pipeline_inference(raw_text: str):
+    """Encapsulates the core analytical execution layer for both workflows."""
     start_time = time.time()
-
-    sentiment_result = sentiment_task(article.text[:512])[0]
+    
+    # Safe guard truncation for basic sentiment input layer
+    sentiment_result = sentiment_task(raw_text[:512])[0]
 
     with torch.no_grad():
-
         inputs = tokenizer(
-            "summarize: " + article.text,
+            "summarize: " + raw_text,
             return_tensors="pt",
             truncation=True,
             max_length=512
@@ -74,13 +74,10 @@ async def generate_summary(article: Article):
             length_penalty=1.0
         )
 
-        summary = tokenizer.decode(
-            output[0],
-            skip_special_tokens=True
-        )
+        summary = tokenizer.decode(output[0], skip_special_tokens=True)
 
     end_time = time.time()
-
+    
     return {
         "summary": summary,
         "metadata": {
@@ -92,3 +89,49 @@ async def generate_summary(article: Article):
             "score": round(sentiment_result["score"], 4)
         }
     }
+
+# --- CONTROLLER ROUTING ---
+@app.get("/")
+async def root():
+    return {"status": "healthy", "engine": "NewsScribe Core"}
+
+@app.post("/generate")
+async def generate_summary(article: Article):
+    if not article.text.strip():
+        raise HTTPException(status_code=400, detail="Input text stream cannot be empty.")
+    return run_pipeline_inference(article.text)
+
+@app.post("/scrape")
+async def scrape_and_summarize(payload: ScrapeRequest):
+    target_url = payload.url.strip()
+    if not target_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Invalid global URI scheme detected.")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NewsScribe/2.0"}
+            response = await client.get(target_url, headers=headers, timeout=12.0)
+            
+            if response.status_code != 200:
+                raise HTTPException(status_code=400, detail=f"Source server returned validation status: {response.status_code}")
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Deconstruct unneeded HTML trees
+        for junk in soup(["script", "style", "nav", "footer", "header", "aside"]):
+            junk.decompose()
+
+        # Capture text paragraphs
+        paragraphs = soup.find_all('p')
+        extracted_text = " ".join([p.get_text() for p in paragraphs]).strip()
+
+        if len(extracted_text) < 150:
+            raise HTTPException(status_code=400, detail="Extracted body element content density too low to yield a robust summary.")
+
+        # Cap token input length gracefully to preserve CPU memory
+        return run_pipeline_inference(extracted_text[:4500])
+
+    except httpx.RequestError as net_err:
+        raise HTTPException(status_code=500, detail=f"Network gateway transport failure: {str(net_err)}")
+    except Exception as general_err:
+        raise HTTPException(status_code=500, detail=f"Internal extraction processing failure: {str(general_err)}")
