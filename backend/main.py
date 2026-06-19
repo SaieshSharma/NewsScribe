@@ -40,7 +40,8 @@ FINETUNED_SENTIMENT_HUB = "SaieshSharma/newsscribe-sentiment"
 print("Initializing models from Hugging Face Registry Hub...")
 
 # Load your custom fine-tuned T5 Summarizer engine
-tokenizer = AutoTokenizer.from_pretrained(FINETUNED_T5_HUB)
+# Force use_fast=False to bypass the broken tokenizer.json file format layout
+tokenizer = AutoTokenizer.from_pretrained(FINETUNED_T5_HUB, use_fast=False)
 model = T5ForConditionalGeneration.from_pretrained(FINETUNED_T5_HUB).to(device)
 print("🏰 Fine-tuned T5 core matrix engine loaded successfully.")
 
