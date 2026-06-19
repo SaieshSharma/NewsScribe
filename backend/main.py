@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from transformers import T5Tokenizer, T5ForConditionalGeneration, pipeline
 from newspaper import Article as NewsArticle
-from newspaper import Configuration as NewsConfig
+from newspaper import Config as NewsConfig
 import nltk
 
 # --- NLTK RUNTIME INITIALIZATION LAYER ---
