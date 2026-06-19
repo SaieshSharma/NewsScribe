@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from transformers import T5Tokenizer, T5ForConditionalGeneration, pipeline
 from bs4 import BeautifulSoup
+from newspaper import Article as NewsArticle
 
 app = FastAPI()
 
@@ -103,6 +104,29 @@ async def generate_summary(article: Article):
 
 @app.post("/scrape")
 async def scrape_and_summarize(payload: ScrapeRequest):
+    target_url = payload.url.strip()
+    if not target_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Invalid global URI scheme detected.")
+
+    try:
+        # Newspaper4k handles downloading, user-agent masking, and HTML cleaning out of the box
+        article = NewsArticle(target_url)
+        article.download()
+        article.parse()
+        
+        extracted_text = article.text.strip()
+
+        if len(extracted_text) < 150:
+            raise HTTPException(status_code=400, detail="Extracted text density too low. The domain might be behind a hard paywall.")
+
+        # Truncate string gracefully to protect deep learning memory context bounds
+        sanitized_input = extracted_text[:4500]
+        
+        # Pass variables cleanly down into your existing inference loop function
+        return run_pipeline_inference(sanitized_input)
+        
+    except Exception as general_err:
+        raise HTTPException(status_code=500, detail=f"Internal extraction processing failure: {str(general_err)}")
     target_url = payload.url.strip()
     if not target_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Invalid global URI scheme detected.")
