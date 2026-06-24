@@ -1,5 +1,7 @@
+
 model_weights/
 sentiment_model/
+
 __pycache__/
 *.pyc
 *.pyo

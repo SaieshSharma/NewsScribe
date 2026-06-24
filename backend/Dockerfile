@@ -1,16 +1,22 @@
-FROM python:3.11-bookworm
+FROM python:3.11-slim
 
 WORKDIR /app
 
+# Zero Margin Error Patch: Install C++ system runtime libs required for SentencePiece
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install python dependencies matrix
 COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Enforce pure CPU package distribution mappings explicitly
-RUN pip install --no-cache-dir \
-    --index-url https://download.pytorch.org/whl/cpu \
-    --extra-index-url https://pypi.org/simple \
-    -r requirements.txt
+# Pre-download and freeze NLTK assets directly into the image layers
+RUN python -c "import nltk; nltk.download('punkt', download_dir='/app/nltk_data'); nltk.download('punkt_tab', download_dir='/app/nltk_data')"
 
-COPY . .
+# Copy application script
+COPY main.py .
 
 EXPOSE 8000
 
