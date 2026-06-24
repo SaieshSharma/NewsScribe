@@ -4,8 +4,7 @@ import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-# Added the missing AutoModelForSequenceClassification import here
-from transformers import AutoTokenizer, T5Tokenizer, T5ForConditionalGeneration, AutoModelForSequenceClassification, pipeline
+from transformers import AutoTokenizer, T5Tokenizer, T5ForConditionalGeneration, AutoModelForSequenceClassification, pipeline, T5TokenizerFast
 from newspaper import Article as NewsArticle
 from newspaper import Config as NewsConfig
 import nltk
@@ -29,7 +28,7 @@ MODEL_DIR = "/app/model_weights"
 SENTIMENT_DIR = "/app/sentiment_model"
 
 # Corrected path references to match variables perfectly
-tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
+tokenizer = T5TokenizerFast.from_pretrained(MODEL_DIR, from_slow=True)
 model = T5ForConditionalGeneration.from_pretrained(MODEL_DIR)
 
 sentiment_tokenizer = AutoTokenizer.from_pretrained(SENTIMENT_DIR)

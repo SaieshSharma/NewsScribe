@@ -39,18 +39,20 @@ jobs:
           key: ${{ secrets.AWS_PRIVATE_KEY }}
           envs: DOCKER_USER # Expressly tells appleboy to pass this local variable over to the EC2 server session
           script: |
-            # Pull down the freshly baked app image from DockerHub using the env variable
-            docker pull $DOCKER_USER/newsscribe-backend:latest
-            
-            # 1. Clear out any container holding port 8000
-            echo "Clearing out existing port 8000 holders..."
+            # 1. Clear out any running container holding port 8000 or using our name target
+            echo "Stopping old deployment container layers..."
             docker rm -f $(docker ps -q --filter "publish=8000") || true
-            
-            # 2. Clear out any dead container hogging our target name
-            echo "Clearing out any name conflicts..."
             docker rm -f newsscribe-backend-inst || true
             
-            # 3. Spin up the new application container layer mapping host-persistent ML weights
+            # 2. FORCE PURGE the local cached image layer so it doesn't trick the pull mechanism
+            echo "Purging old cached image from EC2 host..."
+            docker rmi -f $DOCKER_USER/newsscribe-backend:latest || true
+            
+            # 3. Pull down the fresh app image from DockerHub over the wire
+            echo "Pulling down fresh application build layer..."
+            docker pull $DOCKER_USER/newsscribe-backend:latest
+            
+            # 4. Spin up the new application container layer mapping host-persistent ML weights
             echo "Launching updated NewsScribe container with volume attachments..."
             docker run -d \
               --name newsscribe-backend-inst \
@@ -60,6 +62,6 @@ jobs:
               --restart unless-stopped \
               $DOCKER_USER/newsscribe-backend:latest
 
-            # 4. Garbage Collection (Aggressive disk hygiene layer)
-            echo "Purging stale infrastructure image layers..."
+            # 5. Garbage Collection (Aggressive disk hygiene layer)
+            echo "Purging stale infrastructure build artifacts..."
             docker image prune -a -f
