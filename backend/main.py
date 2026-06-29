@@ -1,6 +1,13 @@
+
 import time
 import os
 import torch
+
+# --- HARD HARDWARE THROTTLING FOR CPU CONTEXTS ---
+# Prevents PyTorch from creating core thrashing on tight EC2 virtual instances
+torch.set_num_threads(1)
+torch.set_num_interop_threads(1)
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -24,15 +31,11 @@ app.add_middleware(
 
 device = "cpu"
 
-# Mapped absolute storage directory constants
 MODEL_DIR = "/app/model_weights"
 SENTIMENT_DIR = "/app/sentiment_model"
 
-# --- PROTOCOL INITIALIZATION LAYER ---
 tokenizer = T5Tokenizer.from_pretrained("google-t5/t5-base")
 model = T5ForConditionalGeneration.from_pretrained(MODEL_DIR)
-
-# Force the T5 model configuration to use Key-Value caching natively
 model.config.use_cache = True
 
 sentiment_tokenizer = AutoTokenizer.from_pretrained(SENTIMENT_DIR)
@@ -47,13 +50,13 @@ class ScrapeRequest(BaseModel):
 def run_pipeline_inference(raw_text: str):
     start_time = time.time()
     
-    # 1. MANUAL EXTRACTOR FOR DISTILBERT 
-    truncated_input_text = raw_text[:512]
+    # 1. LIGHTWEIGHT MANUALLY STEPPED SENTIMENT INFERENCE
+    truncated_input_text = raw_text[:384] # Tightened for faster sentiment encoding processing
     sentiment_inputs = sentiment_tokenizer(
         truncated_input_text,
         return_tensors="pt",
         truncation=True,
-        max_length=512
+        max_length=384
     )
     sentiment_inputs.pop("token_type_ids", None)
 
@@ -65,17 +68,23 @@ def run_pipeline_inference(raw_text: str):
         sentiment_label = sentiment_model.config.id2label[prediction_index]
         sentiment_score = probabilities[prediction_index].item()
 
-        # 2. OPTIMIZED HIGH-SPEED GENERATION FOR T5 SUMMARIZER
-        # Added padding=True to ensure the CPU doesn't process phantom matrix sequences
-        inputs = tokenizer("summarize: " + raw_text, return_tensors="pt", truncation=True, padding=True, max_length=512).to(device)
+        # 2. HIGH-SPEED LEAN DECODING FOR T5 SUMMARIZER
+        # Tightened max_length window from 512 down to a fast 320 block matrix frame
+        inputs = tokenizer(
+            "summarize: " + raw_text, 
+            return_tensors="pt", 
+            truncation=True, 
+            padding=True, 
+            max_length=320 
+        ).to(device)
         
         output = model.generate(
             inputs["input_ids"], 
-            attention_mask=inputs["attention_mask"], # Tells the CPU to completely ignore empty padding spaces
-            num_beams=1,             # Swaps beam search to greedy generation, providing a 4x execution speedup
-            use_cache=True,          # Restores Key-Value storage caching so past tokens aren't re-computed
-            max_new_tokens=90,       # Optimized summary container limit
-            min_new_tokens=25, 
+            attention_mask=inputs["attention_mask"], 
+            num_beams=1,             
+            use_cache=True,          
+            max_new_tokens=70,       # Compact and punchy headlines/summaries process significantly quicker
+            min_new_tokens=20, 
             early_stopping=True, 
             no_repeat_ngram_size=3, 
             length_penalty=1.0
@@ -142,7 +151,7 @@ async def scrape_and_summarize(payload: ScrapeRequest):
         if len(extracted_text) < 150: 
             raise HTTPException(status_code=400, detail="Unable to safely parse main news body from this layout.")
             
-        return run_pipeline_inference(extracted_text[:4500])
+        return run_pipeline_inference(extracted_text[:4000])
         
     except Exception as err: 
         raise HTTPException(status_code=500, detail=str(err))
