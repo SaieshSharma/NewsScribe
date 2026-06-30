@@ -5,7 +5,7 @@ on:
     branches: [ main ]
     paths:
       - 'backend/**'
-      - '.github/workflows/**' # Automatically catches any workflow file iteration changes
+      - '.github/workflows/**'
 
 jobs:
   build-and-ship:
@@ -31,28 +31,41 @@ jobs:
       - name: Execute Live Remote Server Swap via SSH
         uses: appleboy/ssh-action@v1.0.3
         env:
-          # Injecting the secret as a clean, lowercase-safe environment string safely bridged into the shell scope
           DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
         with:
           host: ${{ secrets.AWS_HOST }}
           username: ubuntu
           key: ${{ secrets.AWS_PRIVATE_KEY }}
-          envs: DOCKER_USER # Expressly tells appleboy to pass this local variable over to the EC2 server session
+          envs: DOCKER_USER
           script: |
-            # 1. Clear out any running container holding port 8000 or using our name target
-            echo "Stopping old deployment container layers..."
-            docker rm -f $(docker ps -q --filter "publish=8000") || true
-            docker rm -f newsscribe-backend-inst || true
+            # 1. Safely handle any container hogging port 8000
+            echo "Checking for port 8000 hogging layers..."
+            OLD_PORT_CONTAINER="$(docker ps -q --filter "publish=8000")"
+            if [ -n "$OLD_PORT_CONTAINER" ]; then
+              docker rm -f "$OLD_PORT_CONTAINER"
+            fi
+
+            # 2. Conditional check for existing name target to avoid stderr noise
+            echo "Checking for existing container name layers..."
+            if docker ps -a --format '{{.Names}}' | grep -qx 'newsscribe-backend-inst'; then
+              docker rm -f newsscribe-backend-inst
+            else
+              echo "Container newsscribe-backend-inst does not exist; continuing safely."
+            fi
             
-            # 2. FORCE PURGE the local cached image layer so it doesn't trick the pull mechanism
-            echo "Purging old cached image from EC2 host..."
-            docker rmi -f $DOCKER_USER/newsscribe-backend:latest || true
+            # 3. Conditional check for old image layer to bypass cache-pull tricks safely
+            echo "Checking for cached infrastructure images..."
+            if docker image inspect "$DOCKER_USER/newsscribe-backend:latest" >/dev/null 2>&1; then
+              docker rmi -f "$DOCKER_USER/newsscribe-backend:latest"
+            else
+              echo "No cached image found on disk; continuing safely."
+            fi
             
-            # 3. Pull down the fresh app image from DockerHub over the wire
-            echo "Pulling down fresh application build layer..."
+            # 4. Pull down the reverted/fresh deployment code layer
+            echo "Pulling down clean application build layer..."
             docker pull $DOCKER_USER/newsscribe-backend:latest
             
-            # 4. Spin up the new application container layer mapping host-persistent ML weights
+            # 5. Launch fresh application runtime environment
             echo "Launching updated NewsScribe container with volume attachments..."
             docker run -d \
               --name newsscribe-backend-inst \
@@ -62,6 +75,6 @@ jobs:
               --restart unless-stopped \
               $DOCKER_USER/newsscribe-backend:latest
 
-            # 5. Garbage Collection (Aggressive disk hygiene layer)
+            # 6. Garbage Collection 
             echo "Purging stale infrastructure build artifacts..."
-            docker image prune -a -f
+            docker image prune -f
