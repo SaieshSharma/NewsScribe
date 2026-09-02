@@ -1,55 +1,69 @@
-# 🛠️ Installation & Setup Guide
+# Setup
 
-This guide details the steps required to get the **News Scribe** environment running locally on your machine.
+These steps run the React frontend and FastAPI backend locally. The backend needs local model artifacts before inference can work.
 
----
+## Prerequisites
 
-### 📋 Prerequisites
-- **Python 3.8+**
-- **Node.js 18+**
-- **NVIDIA GPU** (Optional, but recommended for CUDA acceleration)
+- Python 3.11 recommended
+- Node.js 18+
+- T5 model files in `backend/model_weights/`
+- Sentiment model files in `backend/sentiment_model/`
 
----
-
-### 🔹 1. Model Preparation
-Once you have the fine-tuned model files from the training session:
-1. Create the directory: `backend/model_weights/`
-2. Extract the following files into that folder:
-   - `pytorch_model.bin`
-   - `config.json`
-   - `tokenizer_config.json`
-   - `special_tokens_map.json`
-   - `vocab.json` / `tokenizer.model`
-
----
-
-### 🔹 2. Backend Setup (FastAPI)
-Navigate to the backend directory and initialize the Python environment.
+The sentiment model can be downloaded with:
 
 ```bash
-# Enter backend directory
 cd backend
+python download_sentiment.py
+```
 
-# Create a virtual environment
+## Backend
+
+```bash
+cd backend
 python -m venv venv
-
-# Activate virtual environment
-# On Windows:
-.\\venv\\Scripts\\activate
-# On Mac/Linux:
-source venv/bin/activate
-
-# Install dependencies
+venv\Scripts\activate
 pip install -r requirements.txt
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
 
-# Start the server
-uvicorn main:app --reload
+Health check:
 
-# Enter frontend directory
+```bash
+curl http://127.0.0.1:8000/
+```
+
+## Frontend
+
+```bash
 cd frontend
-
-# Install packages
 npm install
-
-# Start the development server
 npm run dev
+```
+
+If the frontend cannot reach the backend, create `frontend/.env`:
+
+```text
+VITE_API_URL=http://127.0.0.1:8000
+```
+
+## Docker Backend
+
+```bash
+cd backend
+docker build -t newsscribe-backend .
+docker run -p 8000:8000 ^
+  -v %cd%\model_weights:/app/model_weights ^
+  -v %cd%\sentiment_model:/app/sentiment_model ^
+  newsscribe-backend
+```
+
+On macOS/Linux, replace `%cd%` with `$(pwd)` and `^` with `\`.
+
+## Common Issues
+
+| Issue | Check |
+| --- | --- |
+| Backend fails on startup | Confirm `backend/model_weights` and `backend/sentiment_model` contain compatible model files. |
+| Frontend request fails | Confirm `VITE_API_URL` points to the backend port. |
+| URL scraping fails | Some sites block scraping, hide content behind JavaScript, or require a subscription. |
+| Slow generation | The app runs on CPU by default; current settings favor stability over maximum summary quality. |
